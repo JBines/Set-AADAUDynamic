@@ -73,6 +73,9 @@ Find me on:
                             [BUGFIX] Lots of testing and bug fixes. 
 0.0.4 20190305 - JBines - [Feature] Add support for Azure Runbook Creds
 1.0.0 20190314 - JBines - [BUGFIX] Begin Process End not supported in azure automation so it has been removed. Other than that it works like a dream... 
+1.0.1 20190401 - JBines - [BUGFIX] Found errors with if(-not()) statements with azure automation. Also added a -top for group membership over 100 members. 
+1.0.2 20190402 - JBines - [BUGFIX] Reset the counter DifferentialScope for administrators so the DifferentialScope is applied independently for users and Scoped Admins
+                            [BUGFIX] Get-AzureADAdministrativeUnitMember is limited to 100 members moved to Get-MsolAdministrativeUnitMember pull all members. 
 
 [TO DO LIST / PRIORITY]
 Everything / HIGH :-( 
@@ -178,6 +181,7 @@ Param
             $Credential = Get-AutomationPSCredential -Name $AutomationPSCredential
 
             Connect-AzureAD -Credential $Credential
+            Connect-MsolService -Credential $Credential 
 
             }
     
@@ -189,17 +193,18 @@ Param
         $objUserGroup = Get-AzureADGroup -ObjectId $UserGroup -ErrorAction Stop
         
         #New Array and Count of Users from Azure Group
-        $userGroupMembers = Get-AzureADGroupMember -ObjectId $UserGroup
+        $userGroupMembers = Get-AzureADGroupMember -ObjectId $UserGroup -All:$true
 
         #New Array and Count of Users from Administrative Unit
-        $administrativeUnitMembers = Get-AzureADAdministrativeUnitMember -ObjectId $AADAdminUnit
+        #$administrativeUnitMembers = Get-AzureADAdministrativeUnitMember -ObjectId $AADAdminUnit
+        $administrativeUnitMembers = Get-MsolAdministrativeUnitMember -AdministrativeUnitObjectId $AADAdminUnit -All
 
         #New Array of Administrators from Administrative Unit
         $administrativeUnitScopedRoleMembers = (Get-AzureADScopedRoleMembership -ObjectId $AADAdminUnit).RoleMemberInfo | select objectid -Unique
 
         #Check AzureADDirectoryRole - Note Only Helpdesk and Service Desk is currently supported. Who know maybe that will change in the future.  
         $objAdminGroup = Get-AzureADGroup -ObjectId $AdminGroup -ErrorAction Stop
-        $adminGroupMembers = Get-AzureADGroupMember -ObjectId $AdminGroup -ErrorAction Stop
+        $adminGroupMembers = Get-AzureADGroupMember -ObjectId $AdminGroup -All:$true -ErrorAction Stop
 
         $uaadmin = $False
         $helpdeskadmin = $False
@@ -278,8 +283,8 @@ Param
     # = -eq Skip
     # => -eq Remove Object
 
-    if(-not($administrativeUnitMembersNull -and $userGroupMembersNull)) {
-        
+    if(($administrativeUnitMembersNull -ne $true) -and ($userGroupMembersNull -ne $true)) {
+
         Foreach($objUser in $assessUsers){  
 
             if ($counter -lt $DifferentialScope) {
@@ -330,7 +335,7 @@ Param
     }
 
     else {
-    
+
         #Blank group remove members from AAD AU
         if ($userGroupMembersNull -and (-not($administrativeUnitMembersNull))) {
             if (-not($administrativeUnitMembersNull)) {
@@ -402,6 +407,9 @@ Param
     Write-Log -Message $iString0 -LogLevel INFO -ConsoleOutput
 
     #Start ScopedRoleMembers
+    
+    #Reset counter for the administrators
+    $counter = 0
 
     Try{
 
@@ -447,7 +455,7 @@ Param
     # == -eq Skip
     # => -eq Remove Object
 
-    if (-not($adminGroupMembersNull -or $administrativeUnitScopedRoleMembersNull)) {
+    if (($adminGroupMembersNull -ne $true) -and ($administrativeUnitScopedRoleMembersNull -ne $true)) {
         
         Foreach($objUser in $assessAdministrators){  
 
