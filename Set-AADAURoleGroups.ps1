@@ -76,6 +76,8 @@ Find me on:
 1.0.1 20190401 - JBines - [BUGFIX] Found errors with if(-not()) statements with azure automation. Also added a -top for group membership over 100 members. 
 1.0.2 20190402 - JBines - [BUGFIX] Reset the counter DifferentialScope for administrators so the DifferentialScope is applied independently for users and Scoped Admins
                             [BUGFIX] Get-AzureADAdministrativeUnitMember is limited to 100 members moved to Get-MsolAdministrativeUnitMember pull all members. 
+1.0.3 20191001 - CGarvin - Changed variable $AdminGroup from String type to $AdminGroups of Array type for maximum flexibility.
+1.0.4 20191021 - JBines - [BUGFIX] Added Select-Object -Unique on the $AdminGroups Array and Cleaned Up Code as suggested by CGarvin.
 
 [TO DO LIST / PRIORITY]
 Everything / HIGH :-( 
@@ -92,7 +94,7 @@ Param
     [String]$UserGroup,
     [Parameter(Mandatory = $True)]
     [ValidateNotNullOrEmpty()]
-    [String]$AdminGroup,
+    [Array]$AdminGroups,
     [Parameter(Mandatory = $False)]
     [ValidateNotNullOrEmpty()]
     [Int]$DifferentialScope = 10,
@@ -188,7 +190,7 @@ Param
         #Check Admin Unit
         $objAADAdminUnit = Get-AzureADAdministrativeUnit -ObjectId $AADAdminUnit -ErrorAction Stop
                 
-            #If($?){Write-Log -Message $dString0 -LogLevel DEBUG -ConsoleOutput}
+        #If($?){Write-Log -Message $dString0 -LogLevel DEBUG -ConsoleOutput}
 
         $objUserGroup = Get-AzureADGroup -ObjectId $UserGroup -ErrorAction Stop
         
@@ -202,9 +204,10 @@ Param
         #New Array of Administrators from Administrative Unit
         $administrativeUnitScopedRoleMembers = (Get-AzureADScopedRoleMembership -ObjectId $AADAdminUnit).RoleMemberInfo | select objectid -Unique
 
-        #Check AzureADDirectoryRole - Note Only Helpdesk and Service Desk is currently supported. Who know maybe that will change in the future.  
-        $objAdminGroup = Get-AzureADGroup -ObjectId $AdminGroup -ErrorAction Stop
-        $adminGroupMembers = Get-AzureADGroupMember -ObjectId $AdminGroup -All:$true -ErrorAction Stop
+        #Check AzureADDirectoryRole - Note Only Helpdesk and Service Desk is currently supported. Who know maybe that will change in the future.
+        $objUserGroup = @($AdminGroups | ForEach-Object {Get-AzureADGroupMember -ObjectId $_ -All:$true -ErrorAction Stop})
+
+        $adminGroupMembers = $objUserGroup | Select-Object -Unique
 
         $uaadmin = $False
         $helpdeskadmin = $False
