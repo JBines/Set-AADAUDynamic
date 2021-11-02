@@ -16,6 +16,9 @@ The UserGroup parameter details the ObjectId of the Administrative Unit. Get-Azu
 .PARAMETER AdminGroup
 The AdminGroup parameter details the ObjectId of the Administrative Unit. Get-AzureADGroup -SearchString "All Scoped Admins"
 
+.PARAMETER GroupFilter
+The GroupFilter parameter allows to identifiy Groups that can also be added to the Administrative Unit. By default we target the Description field of the Group. Wild cards need to be added to your group filter. 
+
 .PARAMETER DifferentialScope
 The DifferentialScope parameter defines how many objects can be added or removed from the Administrative Units in a single operation of the script. The goal of this setting is throttle bulk changes to limit the impact of misconfigurationby an administrator. What value you choose here will be dictated by your userbase and your script schedule. The default value is set to 10 Objects. 
 
@@ -24,6 +27,18 @@ The HelpDeskAdministrator Switch enables the O365 Helpdesk role for administrati
 
 .PARAMETER UserAccountAdministrator
 The UserAccountAdministrator Switch enables the O365 User Account Administrator role for administrative permissions. 
+
+.PARAMETER AutomationCertificate
+ The AutomationCertificate parameter defines which Azure Automation Certificate you would like to use which grants access to Exchange Online. 
+
+.PARAMETER LocalCertificate
+ The LocalCertificate parameter defines the Thumbprint ID of the locally installed certificate which grants access to Azure AD. 
+
+.PARAMETER AzureADAppId
+The EXOAppId parameter specifies the application ID of the service principal. Parameter must be used with -AzureADAutomationCertificate. 
+
+.PARAMETER AzureADTenantId
+The AzureADTenantId parameter You must specify the TenantId parameter to authenticate as a service principal or when using Microsoft account. Populate by using the Tenant GUID. 
 
 .EXAMPLE
 Set-AADUDRoleGroups -AADAdminUnit '7b7c4926-c6d7-4ca8-9bbf-5965751022c2' -UserGroup '0e55190c-73ee-e811-80e9-005056a31be6' -AdminGroup '0e55190c-73ee-e811-80e9-005056a3' -HelpDeskAdministrator
@@ -48,13 +63,14 @@ Log Analytics Workspace - https://docs.microsoft.com/en-us/azure/azure-monitor/l
 Enable-AzureADDirectoryRole - https://docs.microsoft.com/en-us/powershell/module/azuread/enable-azureaddirectoryrole?view=azureadps-2.0 
 
 .NOTES
+Important! - You may need to first Enable-AzureADDirectoryRole for roles Helpdesk Administrator, User Administrator etc | See .Links
+
 This function requires that you have already created your Adminstrative Unit, the Group containing user objects and the Group containing Admin objects. You will also need the ObjectID for roles Helpdesk Administrator or User Account Administrator which can be obtained by running Get-AzureADDirectoryRole
 
 Please be aware that the DifferentialScope applies to both users and Administrators meaning that large changes will also impact the provensioning of Scoped Administrators. 
 
 We used AzureADPreview Version: 2.0.2.5 ()
 
-You may need to first Enable-AzureADDirectoryRole for both the Helpdesk Administrator & User Account Administrator | See .Links
 
 [AUTHOR]
 Joshua Bines, Consultant
@@ -76,11 +92,17 @@ Find me on:
 1.0.1 20190401 - JBines - [BUGFIX] Found errors with if(-not()) statements with azure automation. Also added a -top for group membership over 100 members. 
 1.0.2 20190402 - JBines - [BUGFIX] Reset the counter DifferentialScope for administrators so the DifferentialScope is applied independently for users and Scoped Admins
                             [BUGFIX] Get-AzureADAdministrativeUnitMember is limited to 100 members moved to Get-MsolAdministrativeUnitMember pull all members. 
-1.0.3 20191001 - CGarvin - Changed variable $AdminGroup from String type to $AdminGroups of Array type for maximum flexibility.
-1.0.4 20191021 - JBines - [BUGFIX] Added Select-Object -Unique on the $AdminGroups Array and Cleaned Up Code as suggested by CGarvin.
+1.0.3 20191001 - CG     - Changed variable $AdminGroup from String type to $AdminGroups of Array type for maximum flexibility.
+1.0.4 20191021 - JBines - [BUGFIX] Added Select-Object -Unique on the $AdminGroups Array and Cleaned Up Code as suggested by CG.
+1.1.0 20210621 - JBines - [Feature] Added Support for Modern Authenication via Service Principals.
+1.2.0 20210713 - JBines - [Feature] Added Roles Authenication Administrator & Groups Administrator.
+1.2.1 20211011 - JBines - [BUGFIX] Fixed role name change from User Account Admin to User Administrator. Allow scoped roles to be updated without removing all objects out of the group. 
+1.3.0 20211021 - JBines - [Feature] Script updated to support GA Azure Ad module and options to use modern auth. Removed Requirement for Connect-MsolService with improved GA scope.
+                            [Feature] - Add Groups to Admin Unit via GroupFilter Switch.
 
 [TO DO LIST / PRIORITY]
-Everything / HIGH :-( 
+    Include Support For Azure Groups to be added to AADAUs. / 
+    Azure Managed Idenities / MED
 #>
 
 Param 
@@ -95,9 +117,11 @@ Param
     [Parameter(Mandatory = $True)]
     [ValidateNotNullOrEmpty()]
     [Array]$AdminGroups,
+    [ValidateNotNullOrEmpty()]
+    [string]$GroupFilter,
     [Parameter(Mandatory = $False)]
     [ValidateNotNullOrEmpty()]
-    [Int]$DifferentialScope = 10,
+    [Int]$DifferentialScope = 30,
     [Parameter(Mandatory = $False)]
     [ValidateNotNullOrEmpty()]
     [String]$AutomationPSCredential,
@@ -106,7 +130,23 @@ Param
     [switch]$HelpDeskAdministrator = $False,
     [Parameter(Mandatory = $False)]
     [ValidateNotNullOrEmpty()]
-    [switch]$UserAccountAdministrator = $False
+    [switch]$UserAccountAdministrator = $False,
+    [Parameter(Mandatory = $False)]
+    [ValidateNotNullOrEmpty()]
+    [switch]$AuthenticationAdministrator = $False,
+    [Parameter(Mandatory = $False)]
+    [ValidateNotNullOrEmpty()]
+    [switch]$GroupsAdministrator = $False,
+    [Parameter(Mandatory = $False)]
+    [ValidateNotNullOrEmpty()]
+    [String]$AutomationCertificate,
+    [Parameter(Mandatory = $False)]
+    [ValidateNotNullOrEmpty()]
+    [String]$LocalCertificate,
+    [ValidateNotNullOrEmpty()]
+    [String]$AzureADAppId,
+    [ValidateNotNullOrEmpty()]
+    [String]$AzureADTenantId
 )
 
     #Set VAR
@@ -118,6 +158,9 @@ Param
     $sString2 = "OUT-CMDlet:Remove-AzureADScopedRoleMembership;AADAU:$AADAdminUnit"
     $sString3 = "IN-CMDlet:Add-AzureADScopedRoleMembership;AADAU:$AADAdminUnit;Role:UserAccount"
     $sString4 = "IN-CMDlet:Add-AzureADScopedRoleMembership;AADAU:$AADAdminUnit;Role:Helpdesk"
+    $sString5 = "IN-CMDlet:Add-AzureADScopedRoleMembership;AADAU:$AADAdminUnit;Role:Auth"
+    $sString6 = "IN-CMDlet:Add-AzureADScopedRoleMembership;AADAU:$AADAdminUnit;Role:Groups"
+
     
 # Info Strings
     $iString0 = "Starting AAD AU Scoped Administrator Role Members"
@@ -128,6 +171,7 @@ Param
     $wString1 = "CMDlet:Compare-Object;DifferenceObject:AAD AU membership is equal to NULL"
     $wString2 = "CMDlet:Compare-Object;ReferenceObject:Admin Group membership is equal to NULL"
     $wString3 = "CMDlet:Compare-Object;DifferenceObject:AAD AU Scoped Role membership is equal to NULL"
+    $wString4 = "CMDlet:Compare-Object;DifferenceObject:AAD AU Scoped Role already a member of"
 
 # Error Strings
     $eString0 = "AzureADDirectoryRole not found or more than one exists"
@@ -177,18 +221,39 @@ Param
     #Validate Input Values From Parameter 
 
     Try{
+        If($AutomationCertificate){
+            
+            $AzureADCert = Get-AutomationCertificate -Name $AutomationCertificate
 
-        if ($AutomationPSCredential) {
+            Connect-AzureAD -TenantId $AzureADTenantId -ApplicationId  $AzureADAppId -CertificateThumbprint $AzureADCert.Thumbprint  
+
+        }
+        else {
+
+            If($LocalCertificate){
+
+                Connect-AzureAD -TenantId $AzureADTenantId -ApplicationId  $AzureADAppId -CertificateThumbprint $LocalCertificate
+
+            }
+            Remove-Variable AutomationCertificate
+            Remove-Variable LocalCertificate
+            Remove-Variable AzureADAppId
+            Remove-Variable AzureADTenantId
+
+        }
+
+            if ($AutomationPSCredential) {
             
             $Credential = Get-AutomationPSCredential -Name $AutomationPSCredential
 
             Connect-AzureAD -Credential $Credential
-            Connect-MsolService -Credential $Credential 
+            #1.3.0 removed this requirement! Yay!
+            #Connect-MsolService -Credential $Credential 
 
             }
     
         #Check Admin Unit
-        $objAADAdminUnit = Get-AzureADAdministrativeUnit -ObjectId $AADAdminUnit -ErrorAction Stop
+        $objAADAdminUnit = Get-AzureADMSAdministrativeUnit -Id $AADAdminUnit -ErrorAction Stop
                 
         #If($?){Write-Log -Message $dString0 -LogLevel DEBUG -ConsoleOutput}
 
@@ -198,31 +263,72 @@ Param
         $userGroupMembers = Get-AzureADGroupMember -ObjectId $UserGroup -All:$true
 
         #New Array and Count of Users from Administrative Unit
-        #$administrativeUnitMembers = Get-AzureADAdministrativeUnitMember -ObjectId $AADAdminUnit
-        $administrativeUnitMembers = Get-MsolAdministrativeUnitMember -AdministrativeUnitObjectId $AADAdminUnit -All
+        ##$administrativeUnitMembers = Get-MsolAdministrativeUnitMember -AdministrativeUnitObjectId $AADAdminUnit -All
+        $administrativeUnitMembers = Get-AzureADMSAdministrativeUnitMember -Id $AADAdminUnit -All:$true
 
-        #New Array of Administrators from Administrative Unit
-        $administrativeUnitScopedRoleMembers = (Get-AzureADScopedRoleMembership -ObjectId $AADAdminUnit).RoleMemberInfo | select objectid -Unique
-
-        #Check AzureADDirectoryRole - Note Only Helpdesk and Service Desk is currently supported. Who know maybe that will change in the future.
-        $objUserGroup = @($AdminGroups | ForEach-Object {Get-AzureADGroupMember -ObjectId $_ -All:$true -ErrorAction Stop})
-
-        $adminGroupMembers = $objUserGroup | Select-Object -Unique
-
+        #Check hows many roles are in use by the function. 
         $uaadmin = $False
         $helpdeskadmin = $False
-
-        #Note to Self - Add a check to make sure the roles are enabled and add error & break
+        $authadmin = $False
+        $groupsadmin = $False
+                
         $admins = Get-AzureADDirectoryRole
+        $adDirectoryRoleCount = 0
         foreach($i in $admins) {
-            if(($UserAccountAdministrator)-and($i.DisplayName -eq "User Account Administrator")) {
+            if(($UserAccountAdministrator)-and($i.DisplayName -eq "User Administrator")) {
                 $uaadmin = $i
+                $adDirectoryRoleCount ++
             }
 
             if(($HelpDeskAdministrator)-and($i.DisplayName -eq "Helpdesk Administrator")) {
                 $helpdeskadmin = $i
+                $adDirectoryRoleCount ++
+            }
+
+            if(($AuthenticationAdministrator)-and($i.DisplayName -eq "Authentication Administrator")) {
+                $authadmin = $i
+                $adDirectoryRoleCount ++
+            }
+
+            if(($GroupsAdministrator)-and($i.DisplayName -eq "Groups Administrator")) {
+                $groupsadmin = $i
+                $adDirectoryRoleCount ++
             }
         }
+        
+        #New Array of Administrators from Administrative Unit
+        #$administrativeUnitScopedRole = (Get-AzureADScopedRoleMembership -ObjectId $AADAdminUnit).RoleMemberInfo
+        $administrativeUnitScopedRole = (Get-AzureADMSScopedRoleMembership -Id $AADAdminUnit).RoleMemberInfo
+
+        $administrativeUnitScopedRoleMembers = $administrativeUnitScopedRole | Select-Object id -Unique
+        
+        #Check AzureADDirectoryRole - Note Only Helpdesk and Service Desk is currently supported. Who know maybe that will change in the future. (Yes it did!:-)
+        $objUserGroup = @($AdminGroups | ForEach-Object {Get-AzureADGroupMember -ObjectId $_ -All:$true -ErrorAction Stop})
+
+        $adminGroupMembers = $objUserGroup | Select-Object -Unique
+
+        #Quick Count compare Admins in group vs in the AADAU
+        $adDirectoryRoleCountCheck = $administrativeUnitScopedRole.Count / $adminGroupMembers.count
+
+        if ($adDirectoryRoleCountCheck -lt $adDirectoryRoleCount) {
+            $administrativeUnitScopedRoleMembers = $null
+        }
+        
+        $administrativeUnitScopedRoleMembersNull = $false
+
+        #Find groups by GroupFilter Switch
+        If($GroupFilter){
+
+          $Groups = Get-AzureADGroup -All:$true | Where-Object{$_.Description -like $GroupFilter}
+
+        }
+
+        #Join Groups and User Arrays together
+        $UnitMembers = $userGroupMembers.ObjectId 
+        if ($Groups.count -gt 0) {
+            $UnitMembers += $Groups.ObjectId 
+        } 
+
     }
     
     Catch{
@@ -237,13 +343,12 @@ Param
 
     }
 
-
     Write-Log -Message $iString1 -LogLevel INFO -ConsoleOutput
 
     Try{
 
         #Compare Lists and find missing users those who should be removed. 
-        $assessUsers = Compare-Object -ReferenceObject $userGroupMembers.ObjectId -DifferenceObject $administrativeUnitMembers.ObjectID | Where-Object {$_.SideIndicator -ne "="}
+        $assessUsers = Compare-Object -ReferenceObject $UnitMembers -DifferenceObject $administrativeUnitMembers.ID | Where-Object {$_.SideIndicator -ne "="}
     }
 
     Catch {
@@ -298,7 +403,7 @@ Param
                     
                         $objID = $objUser.InputObject
 
-                        Remove-AzureADAdministrativeUnitMember -ObjectId $AADAdminUnit -MemberId $objID
+                        Remove-AzureADMSAdministrativeUnitMember -Id $AADAdminUnit -MemberId $objID
                             if($?){Write-Log -Message "$sString0;ObjectId:$objID" -LogLevel SUCCESS -ConsoleOutput}
                         
                         #Increase the count post change
@@ -312,7 +417,7 @@ Param
                             
                         $objID = $objUser.InputObject
 
-                        Add-AzureADAdministrativeUnitMember -ObjectId $AADAdminUnit -RefObjectId $objID
+                        Add-AzureADMSAdministrativeUnitMember -Id $AADAdminUnit -RefObjectId $objID
                             if($?){Write-Log -Message "$sString1;ObjectId:$objID" -LogLevel SUCCESS -ConsoleOutput}
                         
                         #Increase the count post change
@@ -346,9 +451,9 @@ Param
                 foreach($objAADAdminUnitMember in $administrativeUnitMembers){
 
                     if($counter -lt $DifferentialScope){
-                        $objID = $objAADAdminUnitMember.objectID
+                        $objID = $objAADAdminUnitMember.ID
 
-                        Remove-AzureADAdministrativeUnitMember -ObjectId $AADAdminUnit -MemberId $objID
+                        Remove-AzureADMSAdministrativeUnitMember -Id $AADAdminUnit -MemberId $objID
                         if($?){Write-Log -Message "$sString0;ObjectId:$objID" -LogLevel SUCCESS -ConsoleOutput}
                         
                         #Increase the count post change
@@ -379,7 +484,7 @@ Param
                         $objID = $objuserGroupMembers.objectID
                         $objDisplayName = $objuserGroupMembers.displayname
 
-                        Add-AzureADAdministrativeUnitMember -ObjectId $AADAdminUnit -RefObjectId $objID
+                        Add-AzureADMSAdministrativeUnitMember -Id $AADAdminUnit -RefObjectId $objID
                         if($?){Write-Log -Message "$sString1;ObjectId:$objID" -LogLevel SUCCESS -ConsoleOutput}
                         
                         #Increase the count post change
@@ -417,7 +522,7 @@ Param
     Try{
 
         #Compare Lists and find missing administrators those who should be removed. 
-        $assessAdministrators = Compare-Object -ReferenceObject $adminGroupMembers.ObjectId -DifferenceObject $administrativeUnitScopedRoleMembers.ObjectId
+        $assessAdministrators = Compare-Object -ReferenceObject $adminGroupMembers.ObjectId -DifferenceObject $administrativeUnitScopedRoleMembers.Id
 
     }
     Catch {
@@ -427,8 +532,8 @@ Param
 
         #Check Error for Blank Array
         $adminGroupMembersCount = $adminGroupMembers.Count
-        $administrativeUnitScopedRoleMembersCount = $administrativeUnitScopedRoleMembers.Count
-        
+        $administrativeUnitScopedRoleMembersCount = $administrativeUnitScopedRoleMembers.Count    
+
         if(($adminGroupMembersCount -eq 0)-and($administrativeUnitScopedRoleMembersCount -eq 0)){
             
             If($?){Write-Log -Message $wString2 -LogLevel WARN -ConsoleOutput;Write-Log -Message $wString3 -LogLevel WARN -ConsoleOutput}
@@ -470,11 +575,11 @@ Param
                     
                         $objID = $objUser.InputObject
                         
-                        $objRoles = Get-AzureADScopedRoleMembership -ObjectId $AADAdminUnit  | Where-Object {$_.RoleMemberInfo.ObjectId -eq $objID}
+                        $objRoles = Get-AzureADMSScopedRoleMembership -Id $AADAdminUnit  | Where-Object {$_.RoleMemberInfo.Id -eq $objID}
 
                         foreach($objRole in $objRoles){
 
-                            Remove-AzureADScopedRoleMembership -ObjectId $objRole.AdministrativeUnitObjectId -ScopedRoleMembershipId $objRole.Id
+                            Remove-AzureADMSScopedRoleMembership -Id $objRole.AdministrativeUnitId -ScopedRoleMembershipId $objRole.Id
                             if($?){Write-Log -Message "$sString2;ObjectId:$objID" -LogLevel SUCCESS -ConsoleOutput}
                         }
                         
@@ -487,19 +592,64 @@ Param
                             }
 
                     "<=" { 
-                            
+                        
+                        $uaadminTrue = $null
+                        $helpdeskadminTrue = $null
+                        $authadminTrue = $null
+                        $groupsadminTrue = $null
+
                         $objID = $objUser.InputObject
                         $objDisplayName = $objadminGroupMembers.displayname
-                        $RoleMember = New-Object -TypeName Microsoft.Open.AzureAD.Model.RoleMemberInfo
-                        $RoleMember.ObjectId = $objID
+
+                        $objRoles = Get-AzureADMSScopedRoleMembership -Id $AADAdminUnit  | Where-Object {$_.RoleMemberInfo.Id -eq $objID}
+
+                        $uaadminTrue = $objRoles | Where-Object {$_.RoleId -eq $uaadmin.ObjectId}
+                        $helpdeskadminTrue = $objRoles | Where-Object {$_.RoleId -eq $helpdeskadmin.ObjectId}
+                        $authadminTrue = $objRoles | Where-Object {$_.RoleId -eq $authadmin.ObjectId}
+                        $groupsadminTrue = $objRoles | Where-Object {$_.RoleId -eq $groupsadmin.ObjectId}
+
+                        #$RoleMember = New-Object -TypeName Microsoft.Open.AzureAD.Model.RoleMemberInfo
+                        #$RoleMember.ObjectId = $objID
+                        
+                        $RoleMember = New-Object -TypeName Microsoft.Open.MSGraph.Model.MsRolememberinfo
+                        $RoleMember.Id = $objID
 
                         if($UserAccountAdministrator -and $uaadmin) {
-                            Add-AzureADScopedRoleMembership -ObjectId $AADAdminUnit -RoleObjectId $uaadmin.ObjectId -RoleMemberInfo $RoleMember
-                            if($?){Write-Log -Message "$sString3;UserObjectID:$objID" -LogLevel SUCCESS -ConsoleOutput}
+                            if ($uaadminTrue) {
+                                Write-Log -Message "$wString4 Role:UserAdministrator;UserObjectID:$objID" -LogLevel WARN -ConsoleOutput
+                            }
+                            else {
+                                Add-AzureADMSScopedRoleMembership -Id $AADAdminUnit -RoleId $uaadmin.ObjectId -RoleMemberInfo $RoleMember
+                                if($?){Write-Log -Message "$sString3;UserObjectID:$objID" -LogLevel SUCCESS -ConsoleOutput}
+                                }
                             }
                         if($HelpDeskAdministrator -and $helpdeskadmin) {
-                            Add-AzureADScopedRoleMembership -ObjectId $AADAdminUnit -RoleObjectId $helpdeskadmin.ObjectId -RoleMemberInfo $RoleMember
-                            if($?){Write-Log -Message "$sString4;UserObjectID:$objID" -LogLevel SUCCESS -ConsoleOutput}
+                            if ($helpdeskadminTrue) {
+                                Write-Log -Message "$wString4 Role:HelpDeskAdministrator;UserObjectID:$objID" -LogLevel WARN -ConsoleOutput
+                            }
+                            else {
+                                Add-AzureADMSScopedRoleMembership -Id $AADAdminUnit -RoleId $helpdeskadmin.ObjectId -RoleMemberInfo $RoleMember
+                                if($?){Write-Log -Message "$sString4;UserObjectID:$objID" -LogLevel SUCCESS -ConsoleOutput}    
+                            }
+                            
+                            }
+                        if($AuthenticationAdministrator -and $authadmin) {
+                            if ($authadminTrue) {
+                                Write-Log -Message "$wString4 Role:AuthenticationAdministrator;UserObjectID:$objID" -LogLevel WARN -ConsoleOutput
+                            }
+                            else {
+                                Add-AzureADMSScopedRoleMembership -Id $AADAdminUnit -RoleId $authadmin.ObjectId -RoleMemberInfo $RoleMember
+                                if($?){Write-Log -Message "$sString5;UserObjectID:$objID" -LogLevel SUCCESS -ConsoleOutput}    
+                            }
+                            }
+                        if($GroupsAdministrator -and $groupsadmin) {
+                            if ($groupsadminTrue) {
+                                Write-Log -Message "$wString4 Role:AuthenticationAdministrator;UserObjectID:$objID" -LogLevel WARN -ConsoleOutput
+                            }
+                            else {
+                                Add-AzureADMSScopedRoleMembership -Id $AADAdminUnit -RoleId $groupsadmin.ObjectId -RoleMemberInfo $RoleMember
+                                if($?){Write-Log -Message "$sString6;UserObjectID:$objID" -LogLevel SUCCESS -ConsoleOutput}
+                                }
                             }
                 
                         #Increase the count post change
@@ -532,14 +682,14 @@ Param
             foreach($objAADAdminUnitMember in $administrativeUnitScopedRoleMembers){
 
                 if($counter -lt $DifferentialScope){
-                    $objID = $objAADAdminUnitMember.objectID
+                    $objID = $objAADAdminUnitMember.ID
                     #$objID = $objUser.InputObject
 
-                    $objRoles = Get-AzureADScopedRoleMembership -ObjectId $AADAdminUnit  | Where-Object {$_.RoleMemberInfo.ObjectId -eq $objID}
+                    $objRoles = Get-AzureADMSScopedRoleMembership -Id $AADAdminUnit  | Where-Object {$_.RoleMemberInfo.Id -eq $objID}
 
                     foreach($objRole in $objRoles){
 
-                        Remove-AzureADScopedRoleMembership -ObjectId $objRole.AdministrativeUnitObjectId -ScopedRoleMembershipId $objRole.Id
+                        Remove-AzureADMSScopedRoleMembership -Id $objRole.AdministrativeUnitId -ScopedRoleMembershipId $objRole.Id
                         if($?){Write-Log -Message "$sString2;ObjectId:$objID" -LogLevel SUCCESS -ConsoleOutput}
                     }
 
@@ -568,18 +718,57 @@ Param
                 if($counter -lt $DifferentialScope){
                     $objID = $objadminGroupMember.objectID
                     $objDisplayName = $objadminGroupMember.displayname
-                    $RoleMember = New-Object -TypeName Microsoft.Open.AzureAD.Model.RoleMemberInfo
-                    $RoleMember.ObjectId = $objID
+                    #$RoleMember = New-Object -TypeName Microsoft.Open.AzureAD.Model.RoleMemberInfo
+                    #$RoleMember.ObjectId = $objID
+
+                    $RoleMember = New-Object -TypeName Microsoft.Open.MSGraph.Model.MsRolememberinfo
+                    $RoleMember.Id = $objID
+
+                    $objRoles = Get-AzureADMSScopedRoleMembership -Id $AADAdminUnit  | Where-Object {$_.RoleMemberInfo.Id -eq $objID}
+
+                    $uaadminTrue = $objRoles | Where-Object {$_.RoleId -eq $uaadmin.ObjectId}
+                    $helpdeskadminTrue = $objRoles | Where-Object {$_.RoleId -eq $helpdeskadmin.ObjectId}
+                    $authadminTrue = $objRoles | Where-Object {$_.RoleId -eq $authadmin.ObjectId}
+                    $groupsadminTrue = $objRoles | Where-Object {$_.RoleId -eq $groupsadmin.ObjectId}
 
                     if($UserAccountAdministrator -and $uaadmin) {
-                        Add-AzureADScopedRoleMembership -ObjectId $AADAdminUnit -RoleObjectId $uaadmin.ObjectId -RoleMemberInfo $RoleMember
-                        if($?){Write-Log -Message "$sString3;UserObjectID:$objID" -LogLevel SUCCESS -ConsoleOutput}
+                            if ($uaadminTrue) {
+                                Write-Log -Message "$wString4 Role:UserAdministrator;UserObjectID:$objID" -LogLevel WARN -ConsoleOutput
+                            }
+                            else {
+                                Add-AzureADMSScopedRoleMembership -Id $AADAdminUnit -RoleId $uaadmin.ObjectId -RoleMemberInfo $RoleMember
+                                if($?){Write-Log -Message "$sString3;UserObjectID:$objID" -LogLevel SUCCESS -ConsoleOutput}
+                            }
+                            
                         }
                     if($HelpDeskAdministrator -and $helpdeskadmin) {
-                        Add-AzureADScopedRoleMembership -ObjectId $AADAdminUnit -RoleObjectId $helpdeskadmin.ObjectId -RoleMemberInfo $RoleMember
-                        if($?){Write-Log -Message "$sString4;UserObjectID:$objID" -LogLevel SUCCESS -ConsoleOutput}
+                            if ($helpdeskadminTrue) {
+                                Write-Log -Message "$wString4 Role:HelpDeskAdministrator;UserObjectID:$objID" -LogLevel WARN -ConsoleOutput
+                            }
+                            else {
+                                Add-AzureADMSScopedRoleMembership -Id $AADAdminUnit -RoleId $helpdeskadmin.ObjectId -RoleMemberInfo $RoleMember
+                                if($?){Write-Log -Message "$sString4;UserObjectID:$objID" -LogLevel SUCCESS -ConsoleOutput}    
+                            }
                         }
-                
+                    if($AuthenticationAdministrator -and $authadmin) {
+                            if ($authadminTrue) {
+                                Write-Log -Message "$wString4 Role:AuthenticationAdministrator;UserObjectID:$objID" -LogLevel WARN -ConsoleOutput
+                            }
+                            else {
+                                Add-AzureADMSScopedRoleMembership -Id $AADAdminUnit -RoleId $authadmin.ObjectId -RoleMemberInfo $RoleMember
+                                if($?){Write-Log -Message "$sString5;UserObjectID:$objID" -LogLevel SUCCESS -ConsoleOutput}    
+                            }
+                        }
+                    if($GroupsAdministrator -and $groupsadmin) {
+                            if ($groupsadminTrue) {
+                                Write-Log -Message "$wString4 Role:AuthenticationAdministrator;UserObjectID:$objID" -LogLevel WARN -ConsoleOutput
+                            }
+                            else {
+                                Add-AzureADMSScopedRoleMembership -Id $AADAdminUnit -RoleId $groupsadmin.ObjectId -RoleMemberInfo $RoleMember
+                                if($?){Write-Log -Message "$sString6;UserObjectID:$objID" -LogLevel SUCCESS -ConsoleOutput}
+                            }
+                        }
+                    
                     #Increase the count post change
                     $counter++
 
@@ -605,4 +794,4 @@ Param
         }
     }#End Else
 
-Disconnect-AzureAD    
+#Disconnect-AzureAD    
