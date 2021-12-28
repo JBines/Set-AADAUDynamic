@@ -5,7 +5,7 @@ This script automates the population of Users and Administrators to Azure AD Adm
 .DESCRIPTION
 Automation is completed by targeting Dynamic or Static Azure AD Groups which will populate the Administrative Unit with Users and Administrators for the selected scope. 
 
-## Set-AADAURoleGroups [-AADAdminUnit <string[ObjectID]>] [-UserGroup <string[ObjectID]>] [-AdminGroup <array[ObjectID]>] [-GroupFilter <string[description_field*]>] [-HelpDeskAdministrator <switch>] [-UserAccountAdministrator <switch>] [-AuthenticationAdministrator <switch>] [-GroupsAdministrator <switch>] 
+## Set-AADAUDynamic [-AADAdminUnit <array[ObjectID],[ObjectID]>] [-UserGroup <string[ObjectID]>] [-AdminGroup <array[ObjectID]>] [-GroupFilter <string[description_field*]>] [-HelpDeskAdministrator <switch>] [-UserAccountAdministrator <switch>] [-AuthenticationAdministrator <switch>] [-GroupsAdministrator <switch>] [-AutomationPSCredential <string[Name]>] [-AutomationPSCertificate <string[Name]>] [-AutomationPSConnection <string[Name]>]
 
 .PARAMETER AADAdminUnit
 The AADAdminUnit parameter specifies the ObjectId of the Administrative Unit. You can find this value by running Get-AzureADAdministrativeUnit 
@@ -67,6 +67,9 @@ Enable-AzureADDirectoryRole - https://docs.microsoft.com/en-us/powershell/module
 
 .NOTES
 Important! - You may need to first Enable-AzureADDirectoryRole for roles Helpdesk Administrator, User Administrator etc | See .Links
+
+    - Run Get-AzureADDirectoryRoleTemplate
+    - Then Enable-AzureADDirectoryRole -RoleTemplateId <ObjectId>
 
 This function requires that you have already created your Adminstrative Unit, the Group containing user objects and the Group containing Admin objects. You will also need the ObjectID for roles Helpdesk Administrator or User Account Administrator which can be obtained by running Get-AzureADDirectoryRole
 
@@ -802,4 +805,4 @@ Param
         }
     }#End Else
 
-#Disconnect-AzureAD    
+Disconnect-AzureAD    
