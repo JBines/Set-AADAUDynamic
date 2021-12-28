@@ -5,7 +5,7 @@ This script automates the population of Users and Administrators to Azure AD Adm
 .DESCRIPTION
 Automation is completed by targeting Dynamic or Static Azure AD Groups which will populate the Administrative Unit with Users and Administrators for the selected scope. 
 
-## Set-AADAURoleGroups [-AADAdminUnit <string[ObjectID]>] [-UserGroup <string[ObjectID]>] [-AdminGroup <string[ObjectID]>] [-UserAdmin <string[ObjectID]>] [-Helpdesk <string[ObjectID]>] 
+## Set-AADAURoleGroups [-AADAdminUnit <string[ObjectID]>] [-UserGroup <string[ObjectID]>] [-AdminGroup <array[ObjectID]>] [-GroupFilter <string[description_field*]>] [-HelpDeskAdministrator <switch>] [-UserAccountAdministrator <switch>] [-AuthenticationAdministrator <switch>] [-GroupsAdministrator <switch>] 
 
 .PARAMETER AADAdminUnit
 The AADAdminUnit parameter specifies the ObjectId of the Administrative Unit. You can find this value by running Get-AzureADAdministrativeUnit 
@@ -23,22 +23,25 @@ The GroupFilter parameter allows to identifiy Groups that can also be added to t
 The DifferentialScope parameter defines how many objects can be added or removed from the Administrative Units in a single operation of the script. The goal of this setting is throttle bulk changes to limit the impact of misconfigurationby an administrator. What value you choose here will be dictated by your userbase and your script schedule. The default value is set to 10 Objects. 
 
 .PARAMETER HelpDeskAdministrator
-The HelpDeskAdministrator Switch enables the O365 Helpdesk role for administrative permissions. 
+The HelpDeskAdministrator Switch enables the Helpdesk role for administrative permissions. 
 
 .PARAMETER UserAccountAdministrator
-The UserAccountAdministrator Switch enables the O365 User Account Administrator role for administrative permissions. 
+The UserAccountAdministrator Switch enables the User Account Administrator role for administrative permissions. 
 
-.PARAMETER AutomationCertificate
- The AutomationCertificate parameter defines which Azure Automation Certificate you would like to use which grants access to Exchange Online. 
+.PARAMETER AuthenticationAdministrator
+The AuthenticationAdministrator Switch enables the Authentication Administrator role for administrative permissions. 
 
-.PARAMETER LocalCertificate
- The LocalCertificate parameter defines the Thumbprint ID of the locally installed certificate which grants access to Azure AD. 
+.PARAMETER GroupsAdministrator
+The GroupsAdministrator Switch enables the Groups Administrator role for administrative permissions. 
 
-.PARAMETER AzureADAppId
-The EXOAppId parameter specifies the application ID of the service principal. Parameter must be used with -AzureADAutomationCertificate. 
+.PARAMETER AutomationPSCredential
+The AutomationPSCredential parameter defines the automation account that should be used. Please note that this requires basic authnetication and is not prefered. Please consider using AutomationPSCertificate & AutomationPSConnection  
 
-.PARAMETER AzureADTenantId
-The AzureADTenantId parameter You must specify the TenantId parameter to authenticate as a service principal or when using Microsoft account. Populate by using the Tenant GUID. 
+.PARAMETER AutomationPSCertificate
+ The AutomationCertificate parameter defines which Azure Automation Certificate you would like to use which grants access to Azure AD. Parameter must be used with -AutomationPSConnection.
+
+.PARAMETER AutomationPSConnection
+ The AutomationPSConnection parameter defines the connection details such as AppID, Tenant ID. Parameter must be used with -AutomationPSCertificate.
 
 .EXAMPLE
 Set-AADUDRoleGroups -AADAdminUnit '7b7c4926-c6d7-4ca8-9bbf-5965751022c2' -UserGroup '0e55190c-73ee-e811-80e9-005056a31be6' -AdminGroup '0e55190c-73ee-e811-80e9-005056a3' -HelpDeskAdministrator
@@ -69,7 +72,7 @@ This function requires that you have already created your Adminstrative Unit, th
 
 Please be aware that the DifferentialScope applies to both users and Administrators meaning that large changes will also impact the provensioning of Scoped Administrators. 
 
-We used AzureADPreview Version: 2.0.2.5 ()
+We used AzureAD GA Version: 2.0.2.140 ()
 
 
 [AUTHOR]
@@ -99,9 +102,10 @@ Find me on:
 1.2.1 20211011 - JBines - [BUGFIX] Fixed role name change from User Account Admin to User Administrator. Allow scoped roles to be updated without removing all objects out of the group. 
 1.3.0 20211021 - JBines - [Feature] Script updated to support GA Azure Ad module and options to use modern auth. Removed Requirement for Connect-MsolService with improved GA scope.
                             [Feature] - Add Groups to Admin Unit via GroupFilter Switch.
+1.3.1 20211227 - JBines - [Feature] Added switches for the Get-AutomationConnection and removed extra variables which were needed.
 
 [TO DO LIST / PRIORITY]
-    Include Support For Azure Groups to be added to AADAUs. / 
+    Migrate to Graph API / MED
     Azure Managed Idenities / MED
 #>
 
@@ -127,6 +131,12 @@ Param
     [String]$AutomationPSCredential,
     [Parameter(Mandatory = $False)]
     [ValidateNotNullOrEmpty()]
+    [String]$AutomationPSConnection,
+    [Parameter(Mandatory = $False)]
+    [ValidateNotNullOrEmpty()]
+    [String]$AutomationPSCertificate,    
+    [Parameter(Mandatory = $False)]
+    [ValidateNotNullOrEmpty()]
     [switch]$HelpDeskAdministrator = $False,
     [Parameter(Mandatory = $False)]
     [ValidateNotNullOrEmpty()]
@@ -136,17 +146,7 @@ Param
     [switch]$AuthenticationAdministrator = $False,
     [Parameter(Mandatory = $False)]
     [ValidateNotNullOrEmpty()]
-    [switch]$GroupsAdministrator = $False,
-    [Parameter(Mandatory = $False)]
-    [ValidateNotNullOrEmpty()]
-    [String]$AutomationCertificate,
-    [Parameter(Mandatory = $False)]
-    [ValidateNotNullOrEmpty()]
-    [String]$LocalCertificate,
-    [ValidateNotNullOrEmpty()]
-    [String]$AzureADAppId,
-    [ValidateNotNullOrEmpty()]
-    [String]$AzureADTenantId
+    [switch]$GroupsAdministrator = $False
 )
 
     #Set VAR
@@ -208,37 +208,45 @@ Param
                   if ($ConsoleOutput -eq $true)
                   {
                          Write-Host "[$TimeStamp] [$LogLevel] :: $Message" -ForegroundColor $Color
-                    if($AutomationPSCredential)
+
+                    if($AutomationPSCredential -or $AutomationPSCertificate -or $AutomationPSConnection)
                     {
                          Write-Output "[$TimeStamp] [$LogLevel] :: $Message"
                     } 
 
                   }
+                  if($LogLevel -eq "ERROR")
+                    {
+                        Write-Error "[$TimeStamp] [$LogLevel] :: $Message"
+                    }
            }
     }
-
 
     #Validate Input Values From Parameter 
 
     Try{
-        If($AutomationCertificate){
+        If($AutomationPSCertificate -and $AutomationPSConnection){
             
-            $AzureADCert = Get-AutomationCertificate -Name $AutomationCertificate
+            $AzureADCert = Get-AutomationCertificate -Name $AutomationPSCertificate
+            $AzureADConnection = Get-AutomationConnection -Name $AutomationPSConnection
 
-            Connect-AzureAD -TenantId $AzureADTenantId -ApplicationId  $AzureADAppId -CertificateThumbprint $AzureADCert.Thumbprint  
+            Connect-AzureAD -TenantId $AzureADConnection.TenantId -ApplicationId $AzureADConnection.ApplicationId -CertificateThumbprint $AzureADCert.Thumbprint 
+
+                #Remove-Variable AutomationPSCertificate
+                #Remove-Variable AutomationPSConnection
+                #Remove-Variable AutomationPSCredential
 
         }
         else {
 
-            If($LocalCertificate){
+            If($AutomationPSCertificate -or $AutomationPSConnection){
 
-                Connect-AzureAD -TenantId $AzureADTenantId -ApplicationId  $AzureADAppId -CertificateThumbprint $LocalCertificate
+                #Remove-Variable AutomationPSCertificate
+                #Remove-Variable AutomationPSConnection
+
+                Write-Log -Message "Script requires both variables: AutomationCertificate and AutomationConnection. Please ensure both are in use or consider another authenication method" -LogLevel ERROR -ConsoleOutput 
 
             }
-            Remove-Variable AutomationCertificate
-            Remove-Variable LocalCertificate
-            Remove-Variable AzureADAppId
-            Remove-Variable AzureADTenantId
 
         }
 
@@ -254,7 +262,7 @@ Param
     
         #Check Admin Unit
         $objAADAdminUnit = Get-AzureADMSAdministrativeUnit -Id $AADAdminUnit -ErrorAction Stop
-                
+
         #If($?){Write-Log -Message $dString0 -LogLevel DEBUG -ConsoleOutput}
 
         $objUserGroup = Get-AzureADGroup -ObjectId $UserGroup -ErrorAction Stop
