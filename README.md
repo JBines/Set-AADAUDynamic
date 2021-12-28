@@ -1,4 +1,4 @@
-# Set-AADAURoleGroups
+# Set-AADAUDynamic
 This script automates the population of Scoped Users and Scoped Administrators to Azure AD Administrative Units.
 
 Automation is completed by targeting Dynamic or Static Azure AD Groups which will populate the Administrative Unit with Users and Administrators for the selected scope. 
@@ -21,7 +21,7 @@ This script automates the population of Users and Administrators to Azure AD Adm
 .DESCRIPTION
 Automation is completed by targeting Dynamic or Static Azure AD Groups which will populate the Administrative Unit with Users and Administrators for the selected scope. 
 
-## Set-AADAURoleGroups [-AADAdminUnit <string[ObjectID]>] [-UserGroup <string[ObjectID]>] [-AdminGroup <array[ObjectID]>] [-GroupFilter <string[description_field*]>] [-HelpDeskAdministrator <switch>] [-UserAccountAdministrator <switch>] [-AuthenticationAdministrator <switch>] [-GroupsAdministrator <switch>] 
+## Set-AADAUDynamic [-AADAdminUnit <array[ObjectID],[ObjectID]>] [-UserGroup <string[ObjectID]>] [-AdminGroup <array[ObjectID]>] [-GroupFilter <string[description_field*]>] [-HelpDeskAdministrator <switch>] [-UserAccountAdministrator <switch>] [-AuthenticationAdministrator <switch>] [-GroupsAdministrator <switch>] [-AutomationPSCredential <string[Name]>] [-AutomationPSCertificate <string[Name]>] [-AutomationPSConnection <string[Name]>]
 
 .PARAMETER AADAdminUnit
 The AADAdminUnit parameter specifies the ObjectId of the Administrative Unit. You can find this value by running Get-AzureADAdministrativeUnit 
@@ -50,17 +50,14 @@ The AuthenticationAdministrator Switch enables the Authentication Administrator 
 .PARAMETER GroupsAdministrator
 The GroupsAdministrator Switch enables the Groups Administrator role for administrative permissions. 
 
-.PARAMETER AutomationCertificate
- The AutomationCertificate parameter defines which Azure Automation Certificate you would like to use which grants access to Exchange Online. 
+.PARAMETER AutomationPSCredential
+The AutomationPSCredential parameter defines the automation account that should be used. Please note that this requires basic authnetication and is not prefered. Please consider using AutomationPSCertificate & AutomationPSConnection  
 
-.PARAMETER LocalCertificate
- The LocalCertificate parameter defines the Thumbprint ID of the locally installed certificate which grants access to Azure AD. 
+.PARAMETER AutomationPSCertificate
+ The AutomationCertificate parameter defines which Azure Automation Certificate you would like to use which grants access to Azure AD. Parameter must be used with -AutomationPSConnection.
 
-.PARAMETER AzureADAppId
-The EXOAppId parameter specifies the application ID of the service principal. Parameter must be used with -AzureADAutomationCertificate. 
-
-.PARAMETER AzureADTenantId
-The AzureADTenantId parameter You must specify the TenantId parameter to authenticate as a service principal or when using Microsoft account. Populate by using the Tenant GUID. 
+.PARAMETER AutomationPSConnection
+ The AutomationPSConnection parameter defines the connection details such as AppID, Tenant ID. Parameter must be used with -AutomationPSCertificate.
 
 .EXAMPLE
 Set-AADUDRoleGroups -AADAdminUnit '7b7c4926-c6d7-4ca8-9bbf-5965751022c2' -UserGroup '0e55190c-73ee-e811-80e9-005056a31be6' -AdminGroup '0e55190c-73ee-e811-80e9-005056a3' -HelpDeskAdministrator
@@ -86,6 +83,9 @@ Enable-AzureADDirectoryRole - https://docs.microsoft.com/en-us/powershell/module
 
 .NOTES
 Important! - You may need to first Enable-AzureADDirectoryRole for roles Helpdesk Administrator, User Administrator etc | See .Links
+
+    - Run Get-AzureADDirectoryRoleTemplate
+    - Then Enable-AzureADDirectoryRole -RoleTemplateId <ObjectId>
 
 This function requires that you have already created your Adminstrative Unit, the Group containing user objects and the Group containing Admin objects. You will also need the ObjectID for roles Helpdesk Administrator or User Account Administrator which can be obtained by running Get-AzureADDirectoryRole
 
@@ -121,8 +121,9 @@ Find me on:
 1.2.1 20211011 - JBines - [BUGFIX] Fixed role name change from User Account Admin to User Administrator. Allow scoped roles to be updated without removing all objects out of the group. 
 1.3.0 20211021 - JBines - [Feature] Script updated to support GA Azure Ad module and options to use modern auth. Removed Requirement for Connect-MsolService with improved GA scope.
                             [Feature] - Add Groups to Admin Unit via GroupFilter Switch.
+1.3.1 20211227 - JBines - [Feature] Added switches for the Get-AutomationConnection and removed extra variables which were needed.
 
 [TO DO LIST / PRIORITY]
-    Include Support For Azure Groups to be added to AADAUs. / 
+    Migrate to Graph API / MED
     Azure Managed Idenities / MED
 #>
