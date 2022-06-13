@@ -1,77 +1,115 @@
 # Set-AADAUDynamic
-This script automates the population of Scoped Users and Scoped Administrators to Azure AD Administrative Units.
+This script automates the population of Scoped Users, Groups, Devices and Scoped Administrators to Azure AD Administrative Units.
 
 Automation is completed by targeting Dynamic or Static Azure AD Groups which will populate the Administrative Unit with Users and Administrators for the selected scope. 
 
-```Set-AADAUDynamic [-AADAdminUnit <array[ObjectID],[ObjectID]>] [-UserGroup <string[ObjectID]>] [-AdminGroup <array[ObjectID]>] [-GroupFilter <string[description_field*]>] [-HelpDeskAdministrator <switch>] [-UserAccountAdministrator <switch>] [-AuthenticationAdministrator <switch>] [-GroupsAdministrator <switch>] [-AutomationPSCredential <string[Name]>] [-AutomationPSCertificate <string[Name]>] [-AutomationPSConnection <string[Name]>]  ```
+``` Powershell
+Set-AADAUDynamic.ps1 [-AADAdminUnit <array[ObjectID],[ObjectID]>] [-UserGroup <string[ObjectID]>] 
+[-AdminGroup <array[ObjectID]>] [-GroupFilter <string[description_field*]>] [-RoleIds <array[ObjectID]>]
+ [-RoleIds <array[ObjectID]>] [-AutomationPSCredential <string[Name]>] 
+ [-AutomationPSCertificate <string[Name]>] [-AutomationPSConnection <string[Name]>]  
+ 
+ ```
 
 ### Extra Notes ###
 
-This function requires that you have already created your Adminstrative Unit, the Group containing user objects and the Group containing Admin objects. You will also need the ObjectID for roles Helpdesk Administrator or User Account Administrator which can be obtained by running Get-AzureADDirectoryRole
+IMPORTANT! This function requires that you have already created your Adminstrative Unit, the Group containing user objects and the Group containing Admin objects. You will also need the ObjectID for roles Helpdesk Administrator or User Account Administrator which can be obtained by running Get-AzureADDirectoryRole
 
-Please be aware that the DifferentialScope applies to both users and Administrators meaning that large changes will also impact the provensioning of Scoped Administrators.  
+IMPORTANT! Hey! You must use user creds or an Azure Application which is granted the following GRAPH API permissions. 
+    
+    Directory.Read.All                  - Access Groups and User Information
+    AdministrativeUnit.ReadWrite.All    - Add/remove users, groups and devices to administrative units 
+    RoleManagement.ReadWrite.Directory  - Add/remove Scoped administrators
+    
+    Quickstart: https://docs.microsoft.com/en-us/azure/active-directory/develop/quickstart-register-app
+    
+NOTE! Please be aware that the DifferentialScope applies to both users and Administrators meaning that large changes will also impact the provensioning of Scoped Administrators. 
 
-We also upgraded from AzureADPreview to GA AzureAD Module Version: 2.0.2.140 () You may need to first Enable-AzureADDirectoryRole for both the Helpdesk Administrator & User Account Administrator.
+NOTE! Script Requires the MSAL.PS Module. Run - Install-Module -Name MSAL.PS - https://www.powershellgallery.com/packages/MSAL.PS
 
-```
+IMPORTANT! The use of client secret is not recommended in production. It is highly recommended that you use 
+Certifcate based authenication.
+
+``` powershell
 <# 
 .SYNOPSIS
 This script automates the population of Users and Administrators to Azure AD Administrative Units.
 
 .DESCRIPTION
-Automation is completed by targeting Dynamic or Static Azure AD Groups which will populate the Administrative Unit with Users and Administrators for the selected scope. 
+Automation is completed by targeting Dynamic or Static Azure AD Groups which will populate the 
+Administrative Unit with Users and Administrators for the selected scope. 
 
-## Set-AADAUDynamic [-AADAdminUnit <array[ObjectID],[ObjectID]>] [-UserGroup <string[ObjectID]>] [-AdminGroup <array[ObjectID]>] [-GroupFilter <string[description_field*]>] [-HelpDeskAdministrator <switch>] [-UserAccountAdministrator <switch>] [-AuthenticationAdministrator <switch>] [-GroupsAdministrator <switch>] [-AutomationPSCredential <string[Name]>] [-AutomationPSCertificate <string[Name]>] [-AutomationPSConnection <string[Name]>]
+## Set-AADAUDynamic.ps1 [-AADAdminUnit <array[ObjectID],[ObjectID]>] [-UserGroup <string[ObjectID]>] 
+[-AdminGroup <array[ObjectID]>] [-GroupFilter <string[description_field*]>] [-RoleIds <array[ObjectID]>]
+ [-RoleIds <array[ObjectID]>] [-AutomationPSCredential <string[Name]>] 
+ [-AutomationPSCertificate <string[Name]>] [-AutomationPSConnection <string[Name]>]
 
 .PARAMETER AADAdminUnit
-The AADAdminUnit parameter specifies the ObjectId of the Administrative Unit. You can find this value by running Get-AzureADAdministrativeUnit 
+The AADAdminUnit parameter specifies the ObjectId of the Administrative Unit. You can find this 
+value by running Get-AzureADAdministrativeUnit 
 
 .PARAMETER UserGroup
-The UserGroup parameter details the ObjectId of the Administrative Unit. Get-AzureADGroup -SearchString "All Users"
+The UserGroup parameter details the ObjectId of the Administrative Unit. 
+Get-AzureADGroup -SearchString "All Users"
 
-.PARAMETER AdminGroup
-The AdminGroup parameter details the ObjectId of the Administrative Unit. Get-AzureADGroup -SearchString "All Scoped Admins"
+.PARAMETER AdminGroups
+The AdminGroup parameter details the ObjectId of the Administrative Unit. 
+Get-AzureADGroup -SearchString "All Scoped Admins"
 
 .PARAMETER GroupFilter
-The GroupFilter parameter allows to identifiy Groups that can also be added to the Administrative Unit. By default we target the Description field of the Group. Wild cards need to be added to your group filter. 
+The GroupFilter parameter allows to identifiy Groups that can also be added to the Administrative 
+Unit. By default we target the Description field of the Group. This uses the default search function
+so wild cards are not needed but we recommend choosing something unique so false positives are not 
+included in your group filter. 
+
+.PARAMETER DeviceGroups
+The DeviceFilter parameter allows for Devices be added to the Administrative Unit. Add the Object 
+GUID for Device groups you would like to add and all Devices within these groups will be added to the AU. 
 
 .PARAMETER DifferentialScope
-The DifferentialScope parameter defines how many objects can be added or removed from the Administrative Units in a single operation of the script. The goal of this setting is throttle bulk changes to limit the impact of misconfigurationby an administrator. What value you choose here will be dictated by your userbase and your script schedule. The default value is set to 10 Objects. 
+The DifferentialScope parameter defines how many objects can be added or removed from the Administrative 
+Units in a single operation of the script. The goal of this setting is throttle bulk changes to limit the 
+impact of misconfigurationby an administrator. What value you choose here will be dictated by your userbase 
+and your script schedule. The default value is set to 10 Objects. 
 
-.PARAMETER HelpDeskAdministrator
-The HelpDeskAdministrator Switch enables the Helpdesk role for administrative permissions. 
-
-.PARAMETER UserAccountAdministrator
-The UserAccountAdministrator Switch enables the User Account Administrator role for administrative permissions. 
-
-.PARAMETER AuthenticationAdministrator
-The AuthenticationAdministrator Switch enables the Authentication Administrator role for administrative permissions. 
-
-.PARAMETER GroupsAdministrator
-The GroupsAdministrator Switch enables the Groups Administrator role for administrative permissions. 
+.PARAMETER RoleIds
+The RoleIds array includes all Object GUIDs for the roles which you would like to assign. Use the 
+Get-AzureADDirectoryRole CMDlet to identify the the roles you would like to target. 
 
 .PARAMETER AutomationPSCredential
-The AutomationPSCredential parameter defines the automation account that should be used. Please note that this requires basic authnetication and is not prefered. Please consider using AutomationPSCertificate & AutomationPSConnection  
+The AutomationPSCredential parameter defines the automation account that should be used. Please note that 
+this requires basic authnetication and is not prefered. Please consider using AutomationPSCertificate & 
+AutomationPSConnection  
 
 .PARAMETER AutomationPSCertificate
- The AutomationCertificate parameter defines which Azure Automation Certificate you would like to use which grants access to Azure AD. Parameter must be used with -AutomationPSConnection.
+ The AutomationCertificate parameter defines which Azure Automation Certificate you would like to use which 
+ grants access to Azure AD. Parameter must be used with -AutomationPSConnection.
 
 .PARAMETER AutomationPSConnection
- The AutomationPSConnection parameter defines the connection details such as AppID, Tenant ID. Parameter must be used with -AutomationPSCertificate.
+ The AutomationPSConnection parameter defines the connection details such as AppID, Tenant ID. Parameter 
+ must be used with -AutomationPSCertificate.
 
 .EXAMPLE
-Set-AADUDRoleGroups -AADAdminUnit '7b7c4926-c6d7-4ca8-9bbf-5965751022c2' -UserGroup '0e55190c-73ee-e811-80e9-005056a31be6' -AdminGroup '0e55190c-73ee-e811-80e9-005056a3' -HelpDeskAdministrator
+.\Set-AADAUDynamic.ps1 -AADAdminUnit '7b7c4926-c6d7-4ca8-9bbf-5965751022c2' -UserGroup '0e55190c-73ee-e811-80e9-005056a31be6' -AdminGroup '0e55190c-73ee-e811-80e9-005056a3' -RoleIds ('947776ed-f72c-41d3-a3c4-d97378087558','556a69f3-7b0b-45a7-b4c0-f35f1eb06dab') -GroupFilter "BU2 Managed Group*" -DeviceGroups 'b1f0f94e-7525-4292-9cc4-3cb053b9599c' -RoleIds ('0a37a06a-5eef-46a1-a3bb-c9e51ff53e72','4e8ab09b-443c-458a-8df0-c9746f4e407c')
 
--- SET USERS AND HELPDESK ADMINISTRATORS FOR ADMIN UNIT --
+-- SET USERS AND HELPDESK ADMINISTRATORS FOR AU --
 
 In this example we add Users and Administrators (with Helpdesk Role) to the Administrative Unit '7b7c4926-c6d7-4ca8-9bbf-5965751022c2' 
 
 .EXAMPLE
-Set-AADUDRoleGroups -AADAdminUnit '7b7c4926-c6d7-4ca8-9bbf-5965751022c2' -UserGroup '0e55190c-73ee-e811-80e9-005056a31be6' -AdminGroup '0e55190c-73ee-e811-80e9-005056a3' -HelpDeskAdministrator -UserAccountAdministrator
+.\Set-AADAUDynamic.ps1 -AADAdminUnit '7b7c4926-c6d7-4ca8-9bbf-5965751022c2' -UserGroup '0e55190c-73ee-e811-80e9-005056a31be6' -AdminGroup '0e55190c-73ee-e811-80e9-005056a3' -RoleIds ('569bbd46-9742-4130-ad44-0ebc4fb18374')
 
--- SET USERS AND HELPDESK & USER ADMINISTRATORS FOR ADMIN UNIT --
+-- SET USERS AND HELPDESK & USER ADMINISTRATORS FOR AU --
 
 In this example we add Users and Administrators (with Helpdesk & User Account Role) to the Administrative Unit '7b7c4926-c6d7-4ca8-9bbf-5965751022c2' 
+
+.EXAMPLE
+.\Set-AADAUDynamic.ps1 -AADAdminUnit "7b7c4926-c6d7-4ca8-9bbf-5965751022c2"  -UserGroup "0e55190c-73ee-e811-80e9-005056a31be6" -AdminGroups ('0e55190c-73ee-e811-80e9-005056a3','3587ebfc-bb8f-41eb-a043-02bf66361af2') -GroupFilter "Contso Managed Group" -DeviceGroups '3db29ad3-5804-41ac-82d5-4937f71f10e9' -RoleIds ('569bbd46-9742-4130-ad44-0ebc4fb18374')
+
+-- ADD USERS, ADMINISTRATORS, GROUPS AND DEVICES TO AU --
+
+In this example we add Users and Administrators (with Helpdesk & User Account Role) to the Administrative Unit '7b7c4926-c6d7-4ca8-9bbf-5965751022c2' 
+
 
 .LINK
 
@@ -79,20 +117,29 @@ Azure AD Dynamic Group Membership - https://docs.microsoft.com/en-us/azure/activ
 
 Log Analytics Workspace - https://docs.microsoft.com/en-us/azure/azure-monitor/learn/quick-create-workspace
 
-Enable-AzureADDirectoryRole - https://docs.microsoft.com/en-us/powershell/module/azuread/enable-azureaddirectoryrole?view=azureadps-2.0 
-
 .NOTES
-Important! - You may need to first Enable-AzureADDirectoryRole for roles Helpdesk Administrator, User Administrator etc | See .Links
 
-    - Run Get-AzureADDirectoryRoleTemplate
-    - Then Enable-AzureADDirectoryRole -RoleTemplateId <ObjectId>
+IMPORTANT! This function requires that you have already created your Adminstrative Unit, the Group containing user objects and the Group containing Admin objects. You will also need the ObjectID for roles Helpdesk Administrator or User Account Administrator which can be obtained by running Get-AzureADDirectoryRole
 
-This function requires that you have already created your Adminstrative Unit, the Group containing user objects and the Group containing Admin objects. You will also need the ObjectID for roles Helpdesk Administrator or User Account Administrator which can be obtained by running Get-AzureADDirectoryRole
+IMPORTANT! Hey! You must use user creds or an Azure Application which is granted the following GRAPH API permissions. 
+    
+    Directory.Read.All                  - Access Groups and User Information
+    AdministrativeUnit.ReadWrite.All    - Add/remove users, groups and devices to administrative units 
+    RoleManagement.ReadWrite.Directory  - Add/remove Scoped administrators
+    
+    Quickstart: https://docs.microsoft.com/en-us/azure/active-directory/develop/quickstart-register-app
+    
+NOTE! Please be aware that the DifferentialScope applies to both users and Administrators meaning that large changes will also impact the provensioning of Scoped Administrators. 
 
-Please be aware that the DifferentialScope applies to both users and Administrators meaning that large changes will also impact the provensioning of Scoped Administrators. 
+NOTE! Script Requires the MSAL.PS Module. Run - Install-Module -Name MSAL.PS - https://www.powershellgallery.com/packages/MSAL.PS
 
-We used AzureAD GA Version: 2.0.2.140 ()
+IMPORTANT! The use of client secret is not recommended in production. It is highly recommended that you use 
+Certifcate based authenication.
 
+#This code-sample is provided "AS IT IS" without warranty of any kind, either expressed or implied, including but not limited to the implied warranties of merchantability and/or fitness for a particular purpose.
+#This sample is not supported under any standard support program or service.
+#The entire risk arising out of the use or performance of the sample and documentation remains with you. 
+#In no event shall Microsoft, its authors, or anyone else involved in the creation, production, or delivery of the script be liable for any damages whatsoever (including, without limitation, damages for loss of business profits, business interruption, loss of business information, or other pecuniary loss) arising out of  the use of or inability to use the sample or documentation, even if Microsoft or others has been advised of the possibility of such damages.
 
 [AUTHOR]
 Joshua Bines, Consultant
@@ -122,6 +169,9 @@ Find me on:
 1.3.0 20211021 - JBines - [Feature] Script updated to support GA Azure Ad module and options to use modern auth. Removed Requirement for Connect-MsolService with improved GA scope.
                             [Feature] - Add Groups to Admin Unit via GroupFilter Switch.
 1.3.1 20211227 - JBines - [Feature] Added switches for the Get-AutomationConnection and removed extra variables which were needed.
+1.4.0 20220405 - JBines - [Feature] Added Support for the Devices population of devices. Added RoleIds array and updated script to allow targeted mangement of Roles. 
+2.0.0 20220419 - JBines - [Feature] Converted to use Graph API! Major rewrite and Azure AD Module discontinued. Script name changed to Set-AADAUDynamic
+2.0.1 20220602 - JBines - [Feature] Added support for PS Version 7
 
 [TO DO LIST / PRIORITY]
     Migrate to Graph API / MED
